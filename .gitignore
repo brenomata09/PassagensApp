@@ -1,0 +1,12 @@
+.env
+routes.json
+*.key
+*.pem
+*.p12
+*.pfx
+cache_*.json
+monitor_alerts.json
+monitor_cli_alerts.json
+PASSAGENS APP BRENO EM VPS ORACLE.txt
+__pycache__/
+*.pyc

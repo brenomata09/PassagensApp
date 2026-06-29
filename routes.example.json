@@ -1,0 +1,20 @@
+[
+  {
+    "origin": "BSB",
+    "destination": "IGU",
+    "trip_type": "round_trip",
+    "max_price": 900
+  },
+  {
+    "origin": "BSB",
+    "destination": "IGU",
+    "trip_type": "one_way",
+    "max_price": 500
+  },
+  {
+    "origin": "BSB",
+    "destination": "IGU",
+    "trip_type": "return",
+    "max_price": 500
+  }
+]

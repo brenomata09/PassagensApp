@@ -1,0 +1,14 @@
+2026/06/29-01:28:49.685 53a0 Reusing MANIFEST C:\Users\breno\PROJETOS\voos\PassagensApp\data\browser_profiles\kiwi\Default\IndexedDB\https_www.kiwi.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/06/29-01:28:49.686 53a0 Recovering log #37
+2026/06/29-01:28:49.686 53a0 Reusing old log C:\Users\breno\PROJETOS\voos\PassagensApp\data\browser_profiles\kiwi\Default\IndexedDB\https_www.kiwi.com_0.indexeddb.leveldb/000037.log 
+2026/06/29-01:28:49.686 53a0 Delete type=2 #35
+2026/06/29-01:28:49.781 2548 Level-0 table #42: started
+2026/06/29-01:28:49.792 2548 Level-0 table #42: 635 bytes OK
+2026/06/29-01:28:49.797 2548 Delete type=0 #37
+2026/06/29-01:28:49.797 2548 Manual compaction at level-0 from '\x00\x13\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at '\x00\x13\x00\x00\x05' @ 293 : 1
+2026/06/29-01:28:49.797 2548 Compacting 1@0 + 1@1 files
+2026/06/29-01:28:49.802 2548 Generated table #43@0: 61 keys, 1230 bytes
+2026/06/29-01:28:49.802 2548 Compacted 1@0 + 1@1 files => 1230 bytes
+2026/06/29-01:28:49.806 2548 compacted to: files[ 0 1 1 0 0 0 0 ]
+2026/06/29-01:28:49.807 2548 Delete type=2 #42
+2026/06/29-01:28:49.809 2548 Manual compaction at level-0 from '\x00\x13\x00\x00\x05' @ 293 : 1 .. '\x00\x14\x00\x00\x00' @ 0 : 0; will stop at (end)

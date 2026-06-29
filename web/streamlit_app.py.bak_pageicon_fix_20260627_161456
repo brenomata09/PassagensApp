@@ -1,0 +1,307 @@
+﻿from __future__ import annotations
+
+import sys
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import uuid
+import pandas as pd
+import streamlit as st
+
+from core import storage
+from core.models import Route, money
+from core.routes import load_routes, add_route, update_route, delete_route, toggle_route
+from core.sweep import run_sweep
+
+st.set_page_config(
+    page_title="PassagensApp V2.1",
+    page_icon="âœˆï¸",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+storage.init_db()
+
+def safe_df(sql: str):
+    try:
+        return storage.df(sql)
+    except Exception:
+        return pd.DataFrame()
+
+def rerun():
+    st.rerun()
+
+def route_options(routes):
+    return {f"{r.origin} -> {r.destination} | {r.trip_type} | {r.id}": r.id for r in routes}
+
+st.markdown("""
+<style>
+.block-container { padding-top: 1.2rem; }
+.hero {
+  background: linear-gradient(135deg,#07111f 0%,#0f2b46 55%,#07111f 100%);
+  border: 1px solid #1f3b5b;
+  border-radius: 22px;
+  padding: 26px 30px;
+  margin-bottom: 22px;
+}
+.hero-title { color: white; font-size: 2.25rem; font-weight: 800; margin: 0; }
+.hero-sub { color: #b7c4d8; margin-top: 8px; font-size: 1rem; }
+.searchbox {
+  background: #0b1220;
+  border: 1px solid #26364f;
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 18px;
+}
+.card {
+  background: linear-gradient(135deg,#111827 0%,#0b1220 100%);
+  border: 1px solid #26364f;
+  border-radius: 18px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+}
+.route-title { color: #f8fafc; font-size: 1.25rem; font-weight: 800; }
+.muted { color: #94a3b8; font-size: .88rem; }
+.price-big { color: #4ade80; font-size: 1.7rem; font-weight: 900; }
+.price-mid { color: #e5e7eb; font-size: 1.15rem; font-weight: 700; }
+.badge { display:inline-block; padding:5px 10px; border-radius:999px; font-size:.72rem; font-weight:800; margin-right:5px; }
+.ok { background:#064e3b; color:#6ee7b7; }
+.warn { background:#78350f; color:#fbbf24; }
+.info { background:#1e3a8a; color:#93c5fd; }
+.off { background:#374151; color:#d1d5db; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div class="hero">
+  <div class="hero-title">PassagensApp V2.1</div>
+  <div class="hero-sub">Monitor local de passagens: total ida+volta, ida separada, volta separada, rotas editaveis e alertas Telegram.</div>
+</div>
+""", unsafe_allow_html=True)
+
+routes = load_routes()
+
+with st.sidebar:
+    st.header("Controle")
+    if st.button("Rodar sweep agora", type="primary", use_container_width=True):
+        with st.spinner("Consultando Google Flights via fli dates..."):
+            result = run_sweep()
+        st.success("Sweep concluido")
+        st.json(result)
+        st.rerun()
+
+    st.divider()
+    st.caption("Rotas ativas")
+    for r in routes:
+        st.write(("ON" if r.is_active else "OFF") + f"  {r.origin} -> {r.destination}")
+
+df_best = safe_df("""
+SELECT
+  r.id AS route_id,
+  r.origin,
+  r.destination,
+  r.trip_type,
+  r.trip_duration,
+  r.currency,
+  r.price_ceiling_total,
+  r.price_ceiling_outbound,
+  r.price_ceiling_return,
+  r.is_active,
+  MIN(CASE WHEN p.snapshot_kind='TOTAL' THEN p.price END) AS total_price,
+  MIN(CASE WHEN p.snapshot_kind='OUTBOUND' THEN p.price END) AS outbound_price,
+  MIN(CASE WHEN p.snapshot_kind='RETURN' THEN p.price END) AS return_price,
+  COUNT(p.id) AS snapshots,
+  MAX(p.fetched_at) AS last_fetch
+FROM routes r
+LEFT JOIN price_snapshots p ON p.route_id = r.id
+GROUP BY r.id
+ORDER BY total_price ASC
+""")
+
+df_snaps = safe_df("""
+SELECT p.fetched_at, r.origin AS route_origin, r.destination AS route_destination,
+       p.snapshot_kind, p.origin, p.destination, p.departure_date, p.return_date,
+       p.trip_duration, p.price, p.currency, p.sweep_batch_id
+FROM price_snapshots p
+JOIN routes r ON r.id = p.route_id
+ORDER BY p.id DESC
+LIMIT 800
+""")
+
+df_alerts = safe_df("""
+SELECT a.sent_at, r.origin, r.destination, a.snapshot_kind, a.alert_type, a.price, a.previous_price, a.message
+FROM alerts a
+JOIN routes r ON r.id = a.route_id
+ORDER BY a.id DESC
+LIMIT 100
+""")
+
+df_sweeps = safe_df("SELECT * FROM sweep_log ORDER BY id DESC LIMIT 50")
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Rotas", len(routes))
+k2.metric("Snapshots", 0 if df_snaps.empty else len(df_snaps))
+k3.metric("Alertas", 0 if df_alerts.empty else len(df_alerts))
+if df_best.empty or df_best["total_price"].dropna().empty:
+    k4.metric("Melhor total", "-")
+else:
+    k4.metric("Melhor total", money(df_best["total_price"].min()))
+
+tab_monitor, tab_manage, tab_history, tab_alerts = st.tabs(["Monitor", "Rotas", "Historico", "Alertas"])
+
+with tab_monitor:
+    st.markdown('<div class="searchbox">', unsafe_allow_html=True)
+    a, b, c, d = st.columns([1,1,1,1])
+    origin_filter = a.text_input("Origem", value="")
+    dest_filter = b.text_input("Destino", value="")
+    max_total = c.number_input("Preco max total", min_value=0, value=0, step=100)
+    only_active = d.checkbox("Somente ativas", value=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    view = df_best.copy()
+    if only_active and not view.empty:
+        view = view[view["is_active"] == 1]
+    if origin_filter and not view.empty:
+        view = view[view["origin"].str.contains(origin_filter.upper(), na=False)]
+    if dest_filter and not view.empty:
+        view = view[view["destination"].str.contains(dest_filter.upper(), na=False)]
+    if max_total and not view.empty:
+        view = view[(view["total_price"].isna()) | (view["total_price"] <= max_total)]
+
+    if view.empty:
+        st.info("Sem dados para exibir. Rode sweep ou ajuste filtros.")
+    else:
+        for _, row in view.iterrows():
+            status = '<span class="badge ok">ON</span>' if int(row.get("is_active") or 0) == 1 else '<span class="badge off">OFF</span>'
+            total = row.get("total_price")
+            outb = row.get("outbound_price")
+            ret = row.get("return_price")
+
+            ceiling = row.get("price_ceiling_total")
+            if pd.notna(total) and pd.notna(ceiling) and float(total) <= float(ceiling):
+                price_badge = '<span class="badge ok">ABAIXO DO TETO</span>'
+            elif pd.notna(total):
+                price_badge = '<span class="badge warn">MONITORANDO</span>'
+            else:
+                price_badge = '<span class="badge info">SEM COLETA</span>'
+
+            st.markdown(f"""
+            <div class="card">
+              <div style="display:flex; justify-content:space-between; gap:18px; align-items:center;">
+                <div>
+                  <div class="route-title">{row['origin']} -> {row['destination']}</div>
+                  <div class="muted">{row['trip_type']} / {int(row['trip_duration'] or 0)} dias | ultima coleta: {row.get('last_fetch') or '-'}</div>
+                  <div style="margin-top:10px;">{status}{price_badge}<span class="badge info">{int(row.get('snapshots') or 0)} snapshots</span></div>
+                </div>
+                <div style="min-width:360px;">
+                  <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; text-align:right;">
+                    <div><div class="muted">Ida+volta</div><div class="price-big">{money(total, row.get('currency') or 'BRL')}</div></div>
+                    <div><div class="muted">Ida</div><div class="price-mid">{money(outb, row.get('currency') or 'BRL')}</div></div>
+                    <div><div class="muted">Volta</div><div class="price-mid">{money(ret, row.get('currency') or 'BRL')}</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.subheader("Ultimos sweeps")
+    st.dataframe(df_sweeps, use_container_width=True, hide_index=True)
+
+with tab_manage:
+    st.subheader("Gerenciar rotas")
+
+    with st.expander("Adicionar rota", expanded=False):
+        with st.form("add_route_form"):
+            c1, c2, c3 = st.columns(3)
+            origin = c1.text_input("Origem", value="BSB").upper()
+            dest = c2.text_input("Destino", value="IGU").upper()
+            duration = c3.number_input("Duracao round-trip", min_value=1, max_value=60, value=7)
+            c4, c5, c6 = st.columns(3)
+            ceiling_total = c4.number_input("Teto total", min_value=0, value=900, step=50)
+            ceiling_out = c5.number_input("Teto ida", min_value=0, value=500, step=50)
+            ceiling_ret = c6.number_input("Teto volta", min_value=0, value=500, step=50)
+            label = st.text_input("Label", value="")
+            split = st.checkbox("Coletar ida e volta separadas", value=True)
+            submitted = st.form_submit_button("Adicionar")
+            if submitted:
+                r = Route(
+                    id=str(uuid.uuid4()),
+                    origin=origin,
+                    destination=dest,
+                    trip_type="ROUND_TRIP",
+                    trip_duration=int(duration),
+                    currency="BRL",
+                    price_ceiling_total=float(ceiling_total) if ceiling_total else None,
+                    price_ceiling_outbound=float(ceiling_out) if ceiling_out else None,
+                    price_ceiling_return=float(ceiling_ret) if ceiling_ret else None,
+                    is_active=True,
+                    label=label or f"{origin} -> {dest}",
+                    split_legs=split,
+                )
+                add_route(r)
+                st.success("Rota adicionada")
+                st.rerun()
+
+    st.divider()
+
+    for r in load_routes():
+        with st.expander(f"{r.origin} -> {r.destination} | {'ON' if r.is_active else 'OFF'}"):
+            with st.form(f"edit_{r.id}"):
+                c1, c2, c3 = st.columns(3)
+                origin = c1.text_input("Origem", value=r.origin, key=f"origin_{r.id}").upper()
+                dest = c2.text_input("Destino", value=r.destination, key=f"dest_{r.id}").upper()
+                duration = c3.number_input("Duracao", min_value=1, max_value=60, value=int(r.trip_duration), key=f"dur_{r.id}")
+                c4, c5, c6 = st.columns(3)
+                ct = c4.number_input("Teto total", min_value=0, value=int(r.price_ceiling_total or 0), step=50, key=f"ct_{r.id}")
+                co = c5.number_input("Teto ida", min_value=0, value=int(r.price_ceiling_outbound or 0), step=50, key=f"co_{r.id}")
+                cr = c6.number_input("Teto volta", min_value=0, value=int(r.price_ceiling_return or 0), step=50, key=f"cr_{r.id}")
+                label = st.text_input("Label", value=r.label or "", key=f"label_{r.id}")
+                active = st.checkbox("Ativa", value=r.is_active, key=f"active_{r.id}")
+                split = st.checkbox("Coletar ida e volta separadas", value=r.split_legs, key=f"split_{r.id}")
+
+                b1, b2 = st.columns(2)
+                save = b1.form_submit_button("Salvar alteracoes")
+                delete = b2.form_submit_button("Excluir rota")
+
+                if save:
+                    updated = Route(
+                        id=r.id,
+                        origin=origin,
+                        destination=dest,
+                        trip_type="ROUND_TRIP",
+                        trip_duration=int(duration),
+                        currency="BRL",
+                        price_ceiling_total=float(ct) if ct else None,
+                        price_ceiling_outbound=float(co) if co else None,
+                        price_ceiling_return=float(cr) if cr else None,
+                        is_active=active,
+                        label=label or f"{origin} -> {dest}",
+                        split_legs=split,
+                    )
+                    update_route(r.id, updated)
+                    st.success("Rota atualizada")
+                    st.rerun()
+
+                if delete:
+                    delete_route(r.id)
+                    st.warning("Rota excluida")
+                    st.rerun()
+
+with tab_history:
+    st.subheader("Historico")
+    if df_snaps.empty:
+        st.info("Sem historico ainda.")
+    else:
+        chart = df_snaps.copy()
+        chart["serie"] = chart["route_origin"] + " -> " + chart["route_destination"] + " | " + chart["snapshot_kind"]
+        st.line_chart(chart, x="fetched_at", y="price", color="serie", height=380)
+        st.dataframe(df_snaps, use_container_width=True, hide_index=True)
+
+with tab_alerts:
+    st.subheader("Alertas Telegram")
+    if df_alerts.empty:
+        st.info("Nenhum alerta.")
+    else:
+        st.dataframe(df_alerts, use_container_width=True, hide_index=True)

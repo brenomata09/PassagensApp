@@ -1,0 +1,83 @@
+﻿from __future__ import annotations
+
+import requests
+from core.config import settings
+from core.models import money
+from core import storage
+
+def send_telegram(text: str) -> bool:
+    token = settings.telegram_bot_token
+    chat_id = settings.telegram_chat_id
+    if not token or not chat_id:
+        print("Telegram nao configurado. Mensagem:")
+        print(text)
+        return False
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    r = requests.post(url, json={"chat_id": chat_id, "text": text}, timeout=30)
+    r.raise_for_status()
+    return True
+
+def ceiling_for(route, kind: str):
+    if kind == "TOTAL":
+        return route.price_ceiling_total
+    if kind == "OUTBOUND":
+        return route.price_ceiling_outbound
+    if kind == "RETURN":
+        return route.price_ceiling_return
+    return None
+
+def decide(route, snapshot, batch_id: str):
+    if snapshot is None:
+        return None
+
+    route_id = str(snapshot["route_id"])
+    kind = str(snapshot["snapshot_kind"])
+    price = float(snapshot["price"])
+    currency = snapshot["currency"] or route.currency
+
+    if storage.has_recent_alert(route_id, settings.alert_silence_hours, kind):
+        return None
+
+    prev = storage.previous_best(route_id, batch_id, kind)
+    ceiling = ceiling_for(route, kind)
+
+    if ceiling is not None and price <= float(ceiling):
+        return ("BELOW_CEILING", prev, f"{kind}: preco abaixo do teto: {money(price, currency)} <= {money(ceiling, currency)}")
+
+    if prev is not None and price < prev:
+        return ("NEW_LOW", prev, f"{kind}: novo menor preco: {money(price, currency)} < {money(prev, currency)}")
+
+    return None
+
+def message(route, snapshot, alert_type: str, reason: str) -> str:
+    return (
+        "PassagensApp V2.1\n"
+        f"Rota: {route.origin} -> {route.destination}\n"
+        f"Tipo: {route.trip_type} / {route.trip_duration} dias\n"
+        f"Consulta: {snapshot['snapshot_kind']}\n"
+        f"Trecho: {snapshot['origin']} -> {snapshot['destination']}\n"
+        f"Data: {snapshot['departure_date']}\n"
+        f"Volta: {snapshot['return_date'] or '-'}\n"
+        f"Preco: {money(snapshot['price'], snapshot['currency'])}\n"
+        f"Alerta: {alert_type}\n"
+        f"Motivo: {reason}"
+    )
+
+def process(route, snapshot, batch_id: str) -> bool:
+    d = decide(route, snapshot, batch_id)
+    if not d:
+        return False
+    alert_type, prev, reason = d
+    msg = message(route, snapshot, alert_type, reason)
+    sent = send_telegram(msg)
+
+    storage.record_alert(
+        route_id=str(snapshot["route_id"]),
+        snapshot_id=int(snapshot["id"]),
+        kind=str(snapshot["snapshot_kind"]),
+        alert_type=alert_type,
+        price=float(snapshot["price"]),
+        previous_price=prev,
+        message=msg,
+    )
+    return sent
