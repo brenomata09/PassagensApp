@@ -1,7 +1,0 @@
-{
-  "host": "SEU_IP_DA_VPS",
-  "usuario": "ubuntu",
-  "porta": 22,
-  "chave": "C:/caminho/sua-chave.key",
-  "pasta_oracle": "/home/ubuntu/PassagensApp"
-}
